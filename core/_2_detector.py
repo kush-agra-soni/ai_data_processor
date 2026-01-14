@@ -1,69 +1,118 @@
 import re
-import pandas as pd                
-from dateutil.parser import parse 
+import pandas as pd
+from typing import Dict, Tuple
+from dateutil.parser import parse
 
-class datadetector:
+class DataDetector:
+    """
+    Detects and normalizes primitive data types in a DataFrame.
+    This class is deterministic and import-safe (no side effects).
+    """
+
     def __init__(self):
-        self.time_pattern = re.compile(r'^\d{2}:\d{2}:\d{2}$')  # HH:MM:SS format
+        self.time_pattern = re.compile(r"^\d{2}:\d{2}:\d{2}$")  # HH:MM:SS
 
-    def detect_time_column(self, dataframe):
-        """Detect columns with time format (xx:xx:xx) and typecast them as time-only."""
-        for column in dataframe.columns:
-            str_values = dataframe[column].dropna().astype(str).str.strip()
+    # ----------------------------
+    # Time-only column detection
+    # ----------------------------
+    def detect_time_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Detect columns that strictly match HH:MM:SS and convert them
+        to time-only string representation.
+        """
+        df = df.copy()
+
+        for col in df.columns:
+            series = df[col].dropna()
+            if series.empty:
+                continue
+
+            str_values = series.astype(str).str.strip()
+
             if str_values.str.match(self.time_pattern).all():
-                dataframe[column] = pd.to_datetime(dataframe[column], format='%H:%M:%S', errors='coerce').dt.time
-                dataframe[column] = dataframe[column].astype('string')  # Ensure dtype is string to avoid showing dates
-                print(f"Column '{column}' detected as time and typecasted to time-only.")
-        return dataframe
+                df[col] = (
+                    pd.to_datetime(df[col], format="%H:%M:%S", errors="coerce")
+                    .dt.time
+                    .astype("string")
+                )
 
-    def detect_column_type(self, dataframe, column):
-        """Detect the type of a single column."""
-        str_values = dataframe[column].dropna().astype(str).str.strip()
+        return df
 
-        # Detect boolean-like strings
-        if str_values.str.lower().isin(['true', 'false', 'yes', 'no', '1', '0']).all():
-            dataframe[column] = str_values.str.lower().map(lambda x: True if x in ['true', 'yes', '1'] else False)
-            return 'bool'
+    # ----------------------------
+    # Single-column type detection
+    # ----------------------------
+    def detect_column_type(self, df: pd.DataFrame, column: str) -> str:
+        """
+        Detect and coerce the most appropriate data type for a column.
+        """
+        series = df[column].dropna()
+        if series.empty:
+            return "unknown"
 
-        # Detect strictly formatted dates
-        if all(any(sep in val for sep in ['-', '/']) and self.is_date(val) for val in str_values):
-            dataframe[column] = pd.to_datetime(dataframe[column], errors='coerce')
-            return 'date'
+        str_values = series.astype(str).str.strip()
 
-        # Detect numeric (and separate int vs float)
-        numeric_values = pd.to_numeric(str_values, errors='coerce')
+        # Boolean detection
+        if str_values.str.lower().isin(
+            ["true", "false", "yes", "no", "1", "0"]
+        ).all():
+            df[column] = str_values.str.lower().map(
+                lambda x: x in ["true", "yes", "1"]
+            )
+            return "bool"
+
+        # Date detection
+        if str_values.apply(self._is_date).all():
+            df[column] = pd.to_datetime(df[column], errors="coerce")
+            return "date"
+
+        # Numeric detection
+        numeric_values = pd.to_numeric(str_values, errors="coerce")
         if numeric_values.notna().all():
             if (numeric_values % 1 == 0).all():
-                dataframe[column] = numeric_values.astype('Int64')
-                return 'int'
-            dataframe[column] = numeric_values.astype('float')
-            return 'float'
+                df[column] = numeric_values.astype("Int64")
+                return "int"
+            df[column] = numeric_values.astype("float")
+            return "float"
 
-        # Fallback to string
-        dataframe[column] = dataframe[column].astype(str)
-        return 'str'
+        # Fallback: string
+        df[column] = df[column].astype("string")
+        return "str"
 
+    # ----------------------------
+    # Full DataFrame detection
+    # ----------------------------
+    def detect_column_types(
+        self, df: pd.DataFrame
+    ) -> Tuple[pd.DataFrame, Dict[str, str]]:
+        """
+        Detect and coerce column types for the entire DataFrame.
+        """
+        df = df.copy()
+        detected_types: Dict[str, str] = {}
+
+        for col in df.columns:
+            detected_types[col] = self.detect_column_type(df, col)
+
+        return df, detected_types
+
+    # ----------------------------
+    # Public entry point
+    # ----------------------------
+    def run(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
+        """
+        Canonical entry point used by pipeline / AI executor.
+        """
+        df = self.detect_time_columns(df)
+        df, detected_types = self.detect_column_types(df)
+        return df, detected_types
+
+    # ----------------------------
+    # Helpers
+    # ----------------------------
     @staticmethod
-    def is_date(value):
-        """Check if a value is a valid date."""
+    def _is_date(value: str) -> bool:
         try:
             parse(value, fuzzy=False, dayfirst=True)
             return True
         except Exception:
             return False
-
-    def detect_column_types(self, dataframe):
-        """Detect types for all columns in the dataframe."""
-        column_types = {}
-        for column in dataframe.columns:
-            if dataframe[column].dropna().empty:
-                column_types[column] = 'unknown'
-            else:
-                column_types[column] = self.detect_column_type(dataframe, column)
-        return dataframe, column_types
-
-    def detection(self, dataframe):
-        dataframe = self.detect_time_column(dataframe)
-        dataframe, column_types = self.detect_column_types(dataframe)
-        print(dataframe.info())
-        return dataframe, column_types

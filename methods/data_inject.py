@@ -1,70 +1,100 @@
+# methods/data_inject.py
+
+from typing import Optional, Dict, Any
 import os
-import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-import tkinter as tk
-from tabulate import tabulate # type: ignore
-from tkinter import filedialog
-from core._1_loader import load_file
-from core._2_detector import datadetector
-from core._3_cleaner import cleaning
-from core._4_standardizer import standardizer
+import pandas as pd
+
+from core._1_loader import load_file, load_from_database
+from ai.planner import get_planner
+from ai.executor import get_executor
+from ai.logger import AILogger
 
 
-def select_file():
-    root = tk.Tk()
-    root.withdraw()
-    return filedialog.askopenfilename(
-        title="Select Data File",
-        filetypes=[("CSV files", "*.csv"),
-                   ("JSON files", "*.json"),
-                   ("Excel files", "*.xlsx")
-                   ])
+# ==========================================================
+# Manual file-based injection
+# ==========================================================
+def inject_from_file(
+    file_path: str,
+    use_ai: bool = True,
+    target_column: Optional[str] = None,
+    strict_mode: bool = True,
+    logger: Optional[AILogger] = None
+) -> Dict[str, Any]:
+    """
+    Inject data manually from CSV / JSON / XLSX.
+
+    Returns:
+        execution result dict
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    logger = logger or AILogger()
+    logger.info(f"Injecting data from file: {file_path}")
+
+    df = load_file(file_path)
+    logger.info(f"Loaded dataset with shape {df.shape}")
+
+    if not use_ai:
+        logger.warn("AI disabled — returning raw dataset only")
+        return {"data": df}
+
+    planner = get_planner()
+    executor = get_executor(logger=logger, strict_mode=strict_mode)
+
+    logger.info("Generating AI execution plan")
+    decision = planner.plan(df)
+    logger.ai_plan(decision)
+
+    result = executor.execute(
+        df=df,
+        decision=decision,
+        target_column=target_column
+    )
+
+    logger.info("Data injection pipeline completed")
+    return result
 
 
-def process_file(file_path):
-    print(f"Processing file: {file_path}")
+# ==========================================================
+# Database-based injection (scheduled / cron)
+# ==========================================================
+def inject_from_database(
+    query: str,
+    connection,
+    use_ai: bool = True,
+    target_column: Optional[str] = None,
+    strict_mode: bool = True,
+    logger: Optional[AILogger] = None
+) -> Dict[str, Any]:
+    """
+    Inject data from a database query.
 
-    try:
-        dataframe = load_file(file_path)
-        print("Before detection:")
-        print(dataframe.info())
-        print(dataframe.to_string())
+    Intended for scheduled / automated runs.
+    """
+    logger = logger or AILogger()
+    logger.info("Injecting data from database")
 
-        detector = datadetector()
-        dataframe, column_types = detector.detection(dataframe)
+    df = load_from_database(query, connection)
+    logger.info(f"Loaded dataset with shape {df.shape}")
 
-        print("After detection:")
-        print(dataframe.info())
-        print(dataframe.to_string())
+    if not use_ai:
+        logger.warn("AI disabled — returning raw dataset only")
+        return {"data": df}
 
-        dataframe = run_cleaning(dataframe)
-        # dataframe = run_standardizer(dataframe)
-    except Exception as e:
-        print(f"Error: {e}")
+    planner = get_planner()
+    executor = get_executor(logger=logger, strict_mode=strict_mode)
 
+    logger.info("Generating AI execution plan")
+    decision = planner.plan(df)
+    logger.ai_plan(decision)
 
-def run_cleaning(dataframe):
-    """Apply all cleaning methods from the Cleaning class to the DataFrame."""
-    cleaner = cleaning()
-    dataframe = cleaner.run_cleaning(dataframe)
-    print(dataframe.to_string())
-    return dataframe
+    result = executor.execute(
+        df=df,
+        decision=decision,
+        target_column=target_column
+    )
 
-
-def run_standardizer(df):
-    standardizer_instance = standardizer()
-    df = standardizer_instance.format_all(df)
-    print(df.to_string())  # Preview the standardized DataFrame
-    return df
-
-
-def main():
-    file_path = select_file()
-    if not file_path:
-        print("No file selected. Exiting.")
-        exit(1)
-    process_file(file_path)
-
-if __name__ == "__main__":
-    main()
+    logger.info("Database injection pipeline completed")
+    return result

@@ -1,87 +1,100 @@
+# utils/install_req.py
+
+"""
+Virtual environment dependency installer.
+
+Called by start.py after venv creation.
+
+Responsibilities:
+- activate correct venv python
+- upgrade pip safely
+- install requirements.txt
+- fail fast on errors
+"""
+
 import os
 import sys
-import time
-import threading
 import subprocess
-
-stop_loading = False
-
-def loading_animation(message: str):
-    """Displays a loading spinner animation."""
-    spinner = ['◜', '◝', '◞', '◟']
-    i = 0
-    while not stop_loading:
-        sys.stdout.write(f"\r{message} {spinner[i % len(spinner)]}")
-        sys.stdout.flush()
-        i += 1
-        time.sleep(0.1)
-
-def get_venv_paths(venv_dir):
-    """Returns the paths for pip and python executables inside the virtual environment."""
-    if os.name == 'nt':  # Windows
-        pip_exec = os.path.join(venv_dir, "Scripts", "pip.exe")
-        python_exec = os.path.join(venv_dir, "Scripts", "python.exe")
-    else:  # Unix-based systems
-        pip_exec = os.path.join(venv_dir, "bin", "pip")
-        python_exec = os.path.join(venv_dir, "bin", "python")
-    return pip_exec, python_exec
-
-def install_packages(python_exec, packages):
-    """Installs the required packages using pip."""
-    # Start the loading animation in a separate thread
-    global stop_loading
-    thread = threading.Thread(target=loading_animation, args=("Injecting packages",))
-    thread.start()
-
-    try:
-        print("\n>--Injecting pip--<")
-        subprocess.check_call([python_exec, "-m", "pip", "install", "--upgrade", "pip", "--disable-pip-version-check", "--quiet"])
-
-        print("\n>--Injecting required packages--<")
-        subprocess.check_call([python_exec, "-m", "pip", "install", "--quiet", *packages])
-
-    finally:
-        # Stop the spinner once installation is done
-        stop_loading = True
-        thread.join()
-        print("\r>--Package injection completed--<\n")
+from pathlib import Path
 
 
-def choose_method_and_run(python_exec):
-    """Prompts the user to choose a method and runs the corresponding script."""
-    print("\n>--All packages injected successfully--<")
-    print("\n>--Choose the method--<")
-    print("\n(1) for Manual data injection")
-    print("(2) for Scheduled DB injection")
+# ==========================================================
+# Helpers
+# ==========================================================
+def get_venv_python(venv_dir: str) -> str:
+    """
+    Return the path to the venv's python executable.
+    """
+    if os.name == "nt":  # Windows
+        python_path = Path(venv_dir) / "Scripts" / "python.exe"
+    else:  # Linux / macOS
+        python_path = Path(venv_dir) / "bin" / "python"
 
-    choice = input("\nEnter (1) or (2): ").strip()
-    if choice == "1":
-        entry_script = os.path.join("methods", "data_inject.py")
-    elif choice == "2":
-        entry_script = os.path.join("methods", "schedule_inject.py")
-    else:
-        print("⚠ Invalid choice. Exiting.")
-        sys.exit(1)
+    if not python_path.exists():
+        raise FileNotFoundError(
+            f"Python executable not found in venv: {python_path}"
+        )
 
-    print("\n>--Running--<")
-    subprocess.check_call([python_exec, entry_script], cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+    return str(python_path)
 
+
+def run(cmd: list[str]):
+    """
+    Run a subprocess command with strict error handling.
+    """
+    subprocess.check_call(cmd)
+
+
+# ==========================================================
+# Main installer
+# ==========================================================
+def install_requirements(venv_dir: str):
+    print(">--Installing dependencies--<")
+
+    venv_python = get_venv_python(venv_dir)
+
+    project_root = Path(__file__).resolve().parents[1]
+    requirements_file = project_root / "requirements.txt"
+
+    if not requirements_file.exists():
+        raise FileNotFoundError(
+            f"requirements.txt not found at {requirements_file}"
+        )
+
+    # Upgrade pip first (critical for wheels)
+    print("🔧 Upgrading pip...")
+    run([venv_python, "-m", "pip", "install", "--upgrade", "pip"])
+
+    # Install dependencies
+    print("📦 Installing requirements...")
+    run([
+        venv_python,
+        "-m",
+        "pip",
+        "install",
+        "-r",
+        str(requirements_file)
+    ])
+
+    print("✅ All dependencies installed successfully")
+
+
+# ==========================================================
+# CLI entry
+# ==========================================================
 def main():
-    """Main function to handle package installation and method selection."""
-    if len(sys.argv) < 2:
-        print(">--VENV path not provided--<")
+    if len(sys.argv) != 2:
+        print("Usage: python install_req.py <venv_dir>")
         sys.exit(1)
 
     venv_dir = sys.argv[1]
-    pip_exec, python_exec = get_venv_paths(venv_dir)
 
-    required_packages = [
-        "pandas", "scikit-learn", "numpy", "polars", "pyarrow",
-        "openpyxl", "python-dotenv", "loguru", "psycopg2-binary", "tk", "tabulate"
-    ]
+    try:
+        install_requirements(venv_dir)
+    except Exception as e:
+        print(f"❌ Dependency installation failed: {e}")
+        sys.exit(1)
 
-    install_packages(python_exec, required_packages)
-    choose_method_and_run(python_exec)
 
 if __name__ == "__main__":
     main()

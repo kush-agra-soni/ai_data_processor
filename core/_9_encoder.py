@@ -1,86 +1,192 @@
-# >--Encoder.py--<
+# core/_9_encoder.py
 
-from sklearn.preprocessing import LabelEncoder
+from typing import Dict, List, Tuple
 
-def fit_label_encoders(df, columns=None):
-    encoders = {}
+import pandas as pd
+from sklearn.preprocessing import (
+    LabelEncoder,
+    OneHotEncoder,
+    OrdinalEncoder
+)
+
+
+# ----------------------------
+# Label Encoding
+# ----------------------------
+def fit_label_encoders(
+    df: pd.DataFrame,
+    columns: List[str] | None = None
+) -> Tuple[pd.DataFrame, Dict[str, LabelEncoder]]:
+    """
+    Fit LabelEncoders on specified categorical columns.
+    """
+    df = df.copy()
+    encoders: Dict[str, LabelEncoder] = {}
+
     if columns is None:
-        columns = df.select_dtypes(include='object').columns
+        columns = df.select_dtypes(include=["object", "string"]).columns.tolist()
 
     for col in columns:
         le = LabelEncoder()
         df[col] = df[col].astype(str)
         df[col] = le.fit_transform(df[col])
         encoders[col] = le
-        print(f"🔤 LabelEncoder fitted on '{col}'")
 
     return df, encoders
 
-def transform_label_encoders(df, encoders):
+
+def transform_label_encoders(
+    df: pd.DataFrame,
+    encoders: Dict[str, LabelEncoder]
+) -> pd.DataFrame:
+    """
+    Apply fitted LabelEncoders.
+    """
+    df = df.copy()
+
     for col, le in encoders.items():
         if col in df.columns:
             df[col] = df[col].astype(str)
             df[col] = le.transform(df[col])
-            print(f"🔁 Transformed '{col}' using LabelEncoder")
+
     return df
 
-from sklearn.preprocessing import OneHotEncoder
 
-def fit_onehot_encoders(df, columns=None):
+# ----------------------------
+# One-Hot Encoding
+# ----------------------------
+def fit_onehot_encoder(
+    df: pd.DataFrame,
+    columns: List[str] | None = None
+) -> Tuple[OneHotEncoder, List[str]]:
+    """
+    Fit OneHotEncoder on specified columns.
+    """
     if columns is None:
-        columns = df.select_dtypes(include='object').columns
+        columns = df.select_dtypes(include=["object", "string"]).columns.tolist()
 
-    ohe = OneHotEncoder(sparse=False, handle_unknown='ignore')
+    ohe = OneHotEncoder(
+        sparse=False,
+        handle_unknown="ignore"
+    )
     ohe.fit(df[columns])
-    print(f"🧩 OneHotEncoder fitted on: {columns}")
-    return ohe
 
-def transform_onehot_encoders(df, ohe, columns=None):
-    if columns is None:
-        columns = df.select_dtypes(include='object').columns
+    return ohe, columns
+
+
+def transform_onehot_encoder(
+    df: pd.DataFrame,
+    ohe: OneHotEncoder,
+    columns: List[str]
+) -> pd.DataFrame:
+    """
+    Apply OneHotEncoder and return expanded DataFrame.
+    """
+    df = df.copy()
 
     encoded = ohe.transform(df[columns])
-    ohe_df = pd.DataFrame(encoded, columns=ohe.get_feature_names_out(columns), index=df.index)
+    encoded_df = pd.DataFrame(
+        encoded,
+        columns=ohe.get_feature_names_out(columns),
+        index=df.index
+    )
 
     df = df.drop(columns=columns)
-    df = pd.concat([df, ohe_df], axis=1)
-    print(f"🔁 OneHotEncoder applied. Added {len(ohe_df.columns)} columns.")
+    df = pd.concat([df, encoded_df], axis=1)
+
     return df
 
-from sklearn.preprocessing import OrdinalEncoder
 
-def fit_ordinal_encoders(df, columns_with_order: dict):
+# ----------------------------
+# Ordinal Encoding
+# ----------------------------
+def fit_ordinal_encoder(
+    df: pd.DataFrame,
+    columns_with_order: Dict[str, List[str]]
+) -> Tuple[OrdinalEncoder, List[str]]:
     """
-    columns_with_order: dict like {'education': ['high school', 'bachelor', 'master', 'phd']}
+    Fit OrdinalEncoder with explicit category order.
     """
-    oe = OrdinalEncoder(categories=[columns_with_order[col] for col in columns_with_order])
     cols = list(columns_with_order.keys())
+    categories = [columns_with_order[col] for col in cols]
+
+    oe = OrdinalEncoder(categories=categories)
     oe.fit(df[cols])
-    print(f"🔢 OrdinalEncoder fitted on: {cols}")
+
     return oe, cols
 
-def transform_ordinal_encoders(df, oe, columns):
+
+def transform_ordinal_encoder(
+    df: pd.DataFrame,
+    oe: OrdinalEncoder,
+    columns: List[str]
+) -> pd.DataFrame:
+    """
+    Apply OrdinalEncoder.
+    """
+    df = df.copy()
     df[columns] = oe.transform(df[columns])
-    print(f"🔁 OrdinalEncoder applied on {columns}")
     return df
 
-def frequency_encoder(df, columns=None):
+
+# ----------------------------
+# Frequency Encoding
+# ----------------------------
+def frequency_encoder(
+    df: pd.DataFrame,
+    columns: List[str] | None = None
+) -> Tuple[pd.DataFrame, Dict[str, Dict]]:
     """
-    Replace categories with their frequency count or proportion.
+    Replace categories with their frequency proportion.
+    Returns transformed DataFrame and encoding maps.
     """
+    df = df.copy()
+    metadata: Dict[str, Dict] = {}
+
     if columns is None:
-        columns = df.select_dtypes(include='object').columns
+        columns = df.select_dtypes(include=["object", "string"]).columns.tolist()
 
     for col in columns:
-        freq = df[col].value_counts(normalize=True)
-        df[col] = df[col].map(freq)
-        print(f"📊 Frequency encoding applied on '{col}'")
-    
-    return df
+        freq_map = df[col].value_counts(normalize=True)
+        df[col] = df[col].map(freq_map)
+        metadata[col] = freq_map.to_dict()
 
-def encode_all(df):
-    df, label_encoders = fit_label_encoders(df)
-    df = frequency_encoder(df)
-    return df, label_encoders
+    return df, metadata
 
--------------------------------------------------------------
+
+# ----------------------------
+# AI-friendly single entry
+# ----------------------------
+def encode_all(
+    df: pd.DataFrame,
+    strategy: str = "label"
+) -> Tuple[pd.DataFrame, Dict]:
+    """
+    Encode categorical features using a single strategy.
+
+    strategy:
+        - 'label'
+        - 'onehot'
+        - 'frequency'
+    """
+    metadata: Dict = {"strategy": strategy}
+
+    if strategy == "label":
+        df, encoders = fit_label_encoders(df)
+        metadata["encoders"] = list(encoders.keys())
+        return df, metadata
+
+    if strategy == "onehot":
+        ohe, cols = fit_onehot_encoder(df)
+        df = transform_onehot_encoder(df, ohe, cols)
+        metadata["encoded_columns"] = cols
+        return df, metadata
+
+    if strategy == "frequency":
+        df, freq_maps = frequency_encoder(df)
+        metadata["encoded_columns"] = list(freq_maps.keys())
+        return df, metadata
+
+    raise ValueError(
+        "strategy must be one of ['label', 'onehot', 'frequency']"
+    )

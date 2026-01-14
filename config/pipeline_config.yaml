@@ -1,0 +1,192 @@
+# ============================================================
+# PIPELINE CORE CONFIGURATION
+# ============================================================
+
+pipeline:
+  name: automated-data-cleaning-pipeline
+  version: 1.0
+  mode: production              # production | debug
+  fail_fast: true               # stop immediately on step failure
+
+# ============================================================
+# DATA INGESTION
+# ============================================================
+
+ingestion:
+  supported_formats:
+    - csv
+    - json
+    - xlsx
+
+  max_rows: null                # null = no limit
+  max_columns: 500
+
+# ============================================================
+# COLUMN CLEANING
+# ============================================================
+
+cleaning:
+  remove_special_characters: true
+  convert_to_lowercase: true
+  remove_whitespace: true
+  replace_space_with_underscore: true
+  remove_empty_columns: true
+  remove_empty_rows: true
+  remove_duplicates: true
+
+# ============================================================
+# STANDARDIZATION
+# ============================================================
+
+standardization:
+  numerical:
+    enabled: true
+    round_floats: true
+    decimal_places: 1
+
+  strings:
+    enabled: true
+    lowercase: true
+    trim: true
+    collapse_spaces: true
+
+  dates:
+    enabled: true
+    output_format: "%Y-%m-%d"
+    min_valid_ratio: 0.5
+
+  units:
+    enabled: true
+    unit_map:
+      kg:
+        - kilograms
+        - kgs
+        - kg.
+      usd:
+        - $
+        - usd
+        - us dollars
+
+  booleans:
+    enabled: true
+    true_values: ["true", "yes", "y", "1"]
+    false_values: ["false", "no", "n", "0"]
+
+# ============================================================
+# TYPE HANDLING
+# ============================================================
+
+types:
+  proactive_detection: true
+  auto_convert: true
+
+  enforce:
+    enabled: false
+    mapping: {}                 # example: { age: int, salary: float }
+
+# ============================================================
+# OUTLIER HANDLING
+# ============================================================
+
+outliers:
+  enabled: true
+  method: iqr                   # iqr | zscore
+  strategy: auto                # auto | cap | remove
+  iqr_multiplier: 1.5
+  zscore_threshold: 3.0
+
+  max_rows_removed_ratio: 0.15
+  allow_remove: true
+
+# ============================================================
+# MISSING VALUE IMPUTATION
+# ============================================================
+
+imputation:
+  enabled: true
+  strategy: auto                # mean | median | mode | knn | linreg | logreg | auto
+  knn_neighbors: 3
+  max_missing_ratio: 0.40
+
+# ============================================================
+# DATE FEATURE ENGINEERING
+# ============================================================
+
+date_features:
+  enabled: true
+  extract_day: true
+  extract_month: true
+  extract_year: true
+
+# ============================================================
+# ENCODING
+# ============================================================
+
+encoding:
+  enabled: true
+  strategy: onehot              # label | onehot | frequency
+
+  onehot:
+    max_generated_columns: 200
+    drop_original: true
+
+  frequency:
+    normalize: true
+
+# ============================================================
+# FEATURE SELECTION
+# ============================================================
+
+feature_selection:
+  enabled: false                # only for supervised tasks
+  method: rfe                   # rfe | selectkbest
+  max_features: 50
+
+# ============================================================
+# SCALING
+# ============================================================
+
+scaling:
+  enabled: true
+  scaler: standard              # standard | minmax | robust
+  skip_binary_columns: true
+
+# ============================================================
+# CLASS IMBALANCE / RESAMPLING
+# ============================================================
+
+resampling:
+  enabled: false                # only for classification
+  strategy: smote               # smote | random_over | random_under
+  max_size_multiplier: 3.0
+  min_minority_ratio: 0.10
+
+# ============================================================
+# VALIDATION
+# ============================================================
+
+validation:
+  enabled: true
+
+  fail_on:
+    nan_remaining: false
+    invalid_types: false
+    outliers_remaining: false
+
+# ============================================================
+# OUTPUT
+# ============================================================
+
+output:
+  save_cleaned_data: false
+  output_format: csv            # csv | parquet | json
+  output_path: outputs/cleaned_data.csv
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+logging:
+  enabled: true
+  level: INFO                   # INFO | DEBUG
+  log_pipeline_steps: true

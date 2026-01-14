@@ -1,117 +1,144 @@
+# core/_5_outlier_handler.py
+
+from typing import Dict, Tuple
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 
-# 1. Fit bounds using IQR or Z-Score
-def fit_outlier_bounds(df: pd.DataFrame, method: str = "iqr", z_thresh: float = 3.0, iqr_multiplier: float = 1.5) -> dict:
-    bounds = {}
+
+# ----------------------------
+# Bound fitting
+# ----------------------------
+def fit_outlier_bounds(
+    df: pd.DataFrame,
+    method: str = "iqr",
+    z_thresh: float = 3.0,
+    iqr_multiplier: float = 1.5
+) -> Dict[str, Tuple[float, float]]:
+    """
+    Fit outlier bounds per numeric column.
+    """
+    bounds: Dict[str, Tuple[float, float]] = {}
     numeric_cols = df.select_dtypes(include=[np.number]).columns
 
     for col in numeric_cols:
-        col_data = df[col].dropna()
+        series = df[col].dropna()
+        if series.empty:
+            continue
 
         if method == "zscore":
-            mean = col_data.mean()
-            std = col_data.std()
+            mean = series.mean()
+            std = series.std()
             lower = mean - z_thresh * std
             upper = mean + z_thresh * std
 
         elif method == "iqr":
-            Q1 = col_data.quantile(0.25)
-            Q3 = col_data.quantile(0.75)
-            IQR = Q3 - Q1
-            lower = Q1 - iqr_multiplier * IQR
-            upper = Q3 + iqr_multiplier * IQR
+            q1 = series.quantile(0.25)
+            q3 = series.quantile(0.75)
+            iqr = q3 - q1
+            lower = q1 - iqr_multiplier * iqr
+            upper = q3 + iqr_multiplier * iqr
 
         else:
-            raise ValueError("Method must be 'zscore' or 'iqr'")
+            raise ValueError("method must be 'iqr' or 'zscore'")
 
         bounds[col] = (lower, upper)
 
-    print(f"fit_outlier_bounds ✅ Method: {method.upper()}")
     return bounds
 
-# 2. Remove outliers based on bounds
-def remove_outliers(df: pd.DataFrame, bounds: dict) -> pd.DataFrame:
-    df_cleaned = df.copy()
-    for col, (lower, upper) in bounds.items():
-        before_count = df_cleaned.shape[0]
-        df_cleaned = df_cleaned[(df_cleaned[col] >= lower) & (df_cleaned[col] <= upper)]
-        after_count = df_cleaned.shape[0]
-        print(f"remove_outliers ✅ {col}: Removed {before_count - after_count} rows")
-    return df_cleaned
 
-# 3. Cap outliers instead of removing
-def cap_outliers(df: pd.DataFrame, bounds: dict) -> pd.DataFrame:
+# ----------------------------
+# Removal strategy
+# ----------------------------
+def remove_outliers(
+    df: pd.DataFrame,
+    bounds: Dict[str, Tuple[float, float]],
+    max_row_loss_ratio: float = 0.2
+) -> Tuple[pd.DataFrame, Dict[str, int]]:
+    """
+    Remove rows containing outliers.
+    Enforces maximum row loss constraint.
+    """
+    df_clean = df.copy()
+    removal_stats: Dict[str, int] = {}
+
+    initial_rows = len(df_clean)
+
+    for col, (lower, upper) in bounds.items():
+        before = len(df_clean)
+        df_clean = df_clean[
+            (df_clean[col] >= lower) & (df_clean[col] <= upper)
+        ]
+        removed = before - len(df_clean)
+        removal_stats[col] = removed
+
+        # Safety guard
+        if (initial_rows - len(df_clean)) / initial_rows > max_row_loss_ratio:
+            raise RuntimeError(
+                f"Outlier removal exceeded max_row_loss_ratio ({max_row_loss_ratio})"
+            )
+
+    return df_clean, removal_stats
+
+
+# ----------------------------
+# Capping strategy
+# ----------------------------
+def cap_outliers(
+    df: pd.DataFrame,
+    bounds: Dict[str, Tuple[float, float]]
+) -> Tuple[pd.DataFrame, Dict[str, int]]:
+    """
+    Cap outliers instead of removing rows.
+    """
     df_capped = df.copy()
-    for col, (lower, upper) in bounds.items():
-        df_capped[col] = df_capped[col].clip(lower, upper)
-        print(f"cap_outliers ✅ {col}: Values capped to range ({lower}, {upper})")
-    return df_capped
+    cap_stats: Dict[str, int] = {}
 
-# 4. Dynamic decision logic: auto-cap or auto-remove
-def adaptive_outlier_handling(df: pd.DataFrame, method: str = "iqr", strategy: str = "auto") -> pd.DataFrame:
+    for col, (lower, upper) in bounds.items():
+        series = df_capped[col]
+        mask = (series < lower) | (series > upper)
+        cap_stats[col] = int(mask.sum())
+        df_capped[col] = series.clip(lower, upper)
+
+    return df_capped, cap_stats
+
+
+# ----------------------------
+# Adaptive handler (AI-facing)
+# ----------------------------
+def adaptive_outlier_handling(
+    df: pd.DataFrame,
+    method: str = "iqr",
+    strategy: str = "auto",
+    row_threshold: int = 1000,
+    max_row_loss_ratio: float = 0.2
+) -> Tuple[pd.DataFrame, Dict]:
+    """
+    Adaptive outlier handling with safety constraints.
+    Returns cleaned DataFrame and execution metadata.
+    """
     bounds = fit_outlier_bounds(df, method=method)
-    row_count = df.shape[0]
+    metadata = {
+        "method": method,
+        "strategy": strategy,
+        "row_count": len(df),
+        "affected_columns": list(bounds.keys())
+    }
 
     if strategy == "auto":
-        strategy = "cap" if row_count <= 1000 else "remove"
-        print(f"adaptive_outlier_handling 🚦 Auto-selected strategy: {strategy.upper()}")
+        strategy = "cap" if len(df) <= row_threshold else "remove"
+        metadata["auto_selected"] = strategy
 
     if strategy == "cap":
-        return cap_outliers(df, bounds)
+        df_out, stats = cap_outliers(df, bounds)
+        metadata["cap_stats"] = stats
+
     elif strategy == "remove":
-        return remove_outliers(df, bounds)
+        df_out, stats = remove_outliers(
+            df, bounds, max_row_loss_ratio=max_row_loss_ratio
+        )
+        metadata["removal_stats"] = stats
+
     else:
-        raise ValueError("Invalid strategy. Choose from: 'cap', 'remove', or 'auto'")
+        raise ValueError("strategy must be 'cap', 'remove', or 'auto'")
 
-# 5. Optional visualization for debugging
-def visualize_outliers(df: pd.DataFrame, method: str = "iqr", columns: list = None, z_thresh: float = 3.0, iqr_multiplier: float = 1.5):
-    numeric_cols = df.select_dtypes(include=["number"]).columns
-    columns = columns or numeric_cols
-
-    for col in columns:
-        if col not in df.columns:
-            print(f"⚠️ Column '{col}' not in DataFrame.")
-            continue
-
-        col_data = df[col].dropna()
-        plt.figure(figsize=(14, 5))
-
-        # Calculate bounds
-        if method == "zscore":
-            mean = col_data.mean()
-            std = col_data.std()
-            lower = mean - z_thresh * std
-            upper = mean + z_thresh * std
-
-        elif method == "iqr":
-            Q1 = col_data.quantile(0.25)
-            Q3 = col_data.quantile(0.75)
-            IQR = Q3 - Q1
-            lower = Q1 - iqr_multiplier * IQR
-            upper = Q3 + iqr_multiplier * IQR
-
-        else:
-            raise ValueError("Method must be 'zscore' or 'iqr'")
-
-        # Boxplot
-        plt.subplot(1, 2, 1)
-        sns.boxplot(x=col_data, color="lightblue")
-        plt.axvline(lower, color='red', linestyle='--', label='Lower Bound')
-        plt.axvline(upper, color='green', linestyle='--', label='Upper Bound')
-        plt.title(f"Boxplot for '{col}'")
-        plt.legend()
-
-        # Histogram
-        plt.subplot(1, 2, 2)
-        sns.histplot(col_data, kde=True, color="lightgray")
-        plt.axvline(lower, color='red', linestyle='--', label='Lower Bound')
-        plt.axvline(upper, color='green', linestyle='--', label='Upper Bound')
-        plt.title(f"Histogram for '{col}'")
-        plt.legend()
-
-        plt.suptitle(f"Outlier Visualization - {col} ({method.upper()})")
-        plt.tight_layout()
-        plt.show()
+    return df_out, metadata

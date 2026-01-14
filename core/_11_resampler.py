@@ -1,9 +1,28 @@
-# >--Resampler.py--<
+# core/_11_resampler.py
 
+from typing import Tuple, Dict
+
+import pandas as pd
 from imblearn.over_sampling import SMOTE, RandomOverSampler
 from imblearn.under_sampling import RandomUnderSampler
 
-def fit_resampler(strategy="smote", random_state=42, **kwargs):
+
+# ----------------------------
+# Initialize resampler
+# ----------------------------
+def fit_resampler(
+    strategy: str = "smote",
+    random_state: int = 42,
+    **kwargs
+):
+    """
+    Initialize a resampler.
+
+    strategy:
+        - 'smote'
+        - 'random_over'
+        - 'random_under'
+    """
     if strategy == "smote":
         resampler = SMOTE(random_state=random_state, **kwargs)
     elif strategy == "random_over":
@@ -11,55 +30,49 @@ def fit_resampler(strategy="smote", random_state=42, **kwargs):
     elif strategy == "random_under":
         resampler = RandomUnderSampler(random_state=random_state, **kwargs)
     else:
-        raise ValueError(f"Unsupported strategy: {strategy}")
-    
-    print(f"✅ Resampler initialized with strategy: {strategy}")
+        raise ValueError(
+            "strategy must be one of "
+            "['smote', 'random_over', 'random_under']"
+        )
+
     return resampler
 
-def apply_resampling(X, y, resampler):
+
+# ----------------------------
+# Apply resampling safely
+# ----------------------------
+def apply_resampling(
+    X: pd.DataFrame,
+    y: pd.Series,
+    resampler,
+    max_size_multiplier: float = 3.0
+) -> Tuple[pd.DataFrame, pd.Series, Dict]:
+    """
+    Apply resampling with strict size constraints.
+
+    Returns:
+        X_resampled
+        y_resampled
+        metadata
+    """
+    original_size = len(y)
+
     X_res, y_res = resampler.fit_resample(X, y)
-    print(f"🔁 Resampling complete. Original: {len(y)}, Resampled: {len(y_res)}")
-    return X_res, y_res
 
-import matplotlib.pyplot as plt
-import seaborn as sns
+    # Safety guard: prevent dataset explosion
+    if len(y_res) > original_size * max_size_multiplier:
+        raise RuntimeError(
+            f"Resampling exceeded max_size_multiplier "
+            f"({max_size_multiplier}). "
+            f"Original: {original_size}, New: {len(y_res)}"
+        )
 
-def visualize_class_distribution(y_before, y_after=None, labels=("Before", "After")):
-    fig, axes = plt.subplots(1, 2 if y_after is not None else 1, figsize=(12, 5))
+    metadata: Dict = {
+        "strategy": resampler.__class__.__name__,
+        "original_size": original_size,
+        "resampled_size": len(y_res),
+        "class_distribution_before": y.value_counts().to_dict(),
+        "class_distribution_after": y_res.value_counts().to_dict(),
+    }
 
-    if y_after is not None:
-        ax1, ax2 = axes
-        sns.countplot(x=y_before, ax=ax1)
-        ax1.set_title(f"Class Distribution ({labels[0]})")
-        sns.countplot(x=y_after, ax=ax2)
-        ax2.set_title(f"Class Distribution ({labels[1]})")
-    else:
-        sns.countplot(x=y_before, ax=axes)
-        axes.set_title("Class Distribution")
-
-    plt.tight_layout()
-    plt.show()
-
-# Sample usage
-from sklearn.model_selection import train_test_split
-
-X = df.drop("target", axis=1)
-y = df["target"]
-
-visualize_class_distribution(y)
-
-resampler = fit_resampler(strategy="smote")
-X_resampled, y_resampled = apply_resampling(X, y, resampler)
-
-visualize_class_distribution(y, y_resampled)
-
-
-#  Extra Tips:
-# Use SMOTE when you have enough 
-# features to synthesize data.
-# Prefer RandomOverSampler if the 
-# dataset is small and you want faster results.
-# Use RandomUnderSampler when the majority 
-# class is very large and you're okay dropping some data
-
-------------------------------------------------------------
+    return X_res, y_res, metadata

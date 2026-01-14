@@ -1,125 +1,116 @@
-# >--validator.py--<
+# core/_12_validator.py
 
-def check_final_nans(df):
-    """
-    Check for missing values (NaN) in the dataset.
-    
-    Args:
-    - df (DataFrame): The DataFrame to check
-    
-    Returns:
-    - None: Prints out columns with NaNs
-    """
-    nan_summary = df.isna().sum()
-    nan_columns = nan_summary[nan_summary > 0]
-    
-    if not nan_columns.empty:
-        print(f"✅ Columns with missing values (NaNs):\n{nan_columns}")
-    else:
-        print("✅ No missing values found.")
-
-def check_invalid_types(df):
-    """
-    Check for invalid or unexpected data types in the dataset.
-    
-    Args:
-    - df (DataFrame): The DataFrame to check
-    
-    Returns:
-    - None: Prints out columns with invalid types
-    """
-    invalid_columns = df.select_dtypes(exclude=['number']).columns
-    
-    if len(invalid_columns) > 0:
-        print(f"✅ Columns with invalid data types:\n{invalid_columns}")
-    else:
-        print("✅ All columns have valid data types.")
-
+from typing import Dict, Tuple
 import numpy as np
+import pandas as pd
 from scipy import stats
 
-def recheck_outliers(df, method="zscore", threshold=3):
+
+# ----------------------------
+# NaN validation
+# ----------------------------
+def check_final_nans(df: pd.DataFrame) -> Dict:
     """
-    Recheck for outliers in the dataset using Z-scores or IQR method.
-    
-    Args:
-    - df (DataFrame): The DataFrame to check
-    - method (str): Method to use for outlier detection. Options: 'zscore', 'iqr'
-    - threshold (float): The threshold value for outlier detection (default is 3)
-    
-    Returns:
-    - None: Prints out columns with detected outliers
+    Check for remaining NaN values.
+    Returns structured report.
     """
+    nan_counts = df.isna().sum()
+    nan_columns = nan_counts[nan_counts > 0]
+
+    return {
+        "has_nans": not nan_columns.empty,
+        "nan_columns": nan_columns.to_dict()
+    }
+
+
+# ----------------------------
+# Type validation
+# ----------------------------
+def check_invalid_types(
+    df: pd.DataFrame,
+    allowed_dtypes: Tuple[str, ...] = ("number", "bool", "datetime64[ns]")
+) -> Dict:
+    """
+    Detect columns that are not numeric / boolean / datetime.
+    """
+    invalid_columns = []
+
+    for col in df.columns:
+        dtype = str(df[col].dtype)
+        if not any(allowed in dtype for allowed in allowed_dtypes):
+            invalid_columns.append(col)
+
+    return {
+        "invalid_type_columns": invalid_columns,
+        "count": len(invalid_columns)
+    }
+
+
+# ----------------------------
+# Outlier recheck
+# ----------------------------
+def recheck_outliers(
+    df: pd.DataFrame,
+    method: str = "zscore",
+    threshold: float = 3.0
+) -> Dict:
+    """
+    Recheck for remaining outliers.
+    Returns count per column.
+    """
+    numeric_df = df.select_dtypes(include=[np.number])
+    result: Dict = {}
+
+    if numeric_df.empty:
+        return {"outliers": {}}
+
     if method == "zscore":
-        z_scores = np.abs(stats.zscore(df.select_dtypes(include=[np.number])))
-        outliers = (z_scores > threshold).sum(axis=0)
-        
-        outlier_columns = outliers[outliers > 0]
-        if len(outlier_columns) > 0:
-            print(f"✅ Columns with Z-score outliers:\n{outlier_columns}")
-        else:
-            print("✅ No Z-score outliers found.")
-    
+        z_scores = np.abs(stats.zscore(numeric_df, nan_policy="omit"))
+        z_scores = pd.DataFrame(z_scores, columns=numeric_df.columns)
+        result = (z_scores > threshold).sum().to_dict()
+
     elif method == "iqr":
-        Q1 = df.quantile(0.25)
-        Q3 = df.quantile(0.75)
-        IQR = Q3 - Q1
-        outliers = ((df < (Q1 - 1.5 * IQR)) | (df > (Q3 + 1.5 * IQR))).sum(axis=0)
-        
-        outlier_columns = outliers[outliers > 0]
-        if len(outlier_columns) > 0:
-            print(f"✅ Columns with IQR outliers:\n{outlier_columns}")
-        else:
-            print("✅ No IQR outliers found.")
-    
+        q1 = numeric_df.quantile(0.25)
+        q3 = numeric_df.quantile(0.75)
+        iqr = q3 - q1
+        outliers = (
+            (numeric_df < (q1 - 1.5 * iqr)) |
+            (numeric_df > (q3 + 1.5 * iqr))
+        )
+        result = outliers.sum().to_dict()
+
     else:
-        raise ValueError("Invalid method. Choose either 'zscore' or 'iqr'.")
+        raise ValueError("method must be 'zscore' or 'iqr'")
 
-import seaborn as sns
-import matplotlib.pyplot as plt
+    # Keep only columns with detected outliers
+    result = {k: v for k, v in result.items() if v > 0}
 
-def visualize_data_distribution(df):
+    return {
+        "method": method,
+        "outlier_columns": result
+    }
+
+
+# ----------------------------
+# Final validation wrapper
+# ----------------------------
+def validate_dataset(df: pd.DataFrame) -> Dict:
     """
-    Visualize the distribution of features in the dataset using histograms, KDEs, and boxplots.
-    
-    Args:
-    - df (DataFrame): The DataFrame to visualize
-    
-    Returns:
-    - None: Displays the plots
+    Run full validation suite.
+    This is the canonical validator entry point.
     """
-    numeric_columns = df.select_dtypes(include=[np.number]).columns
-    
-    fig, axes = plt.subplots(nrows=len(numeric_columns), ncols=3, figsize=(15, len(numeric_columns) * 5))
-    
-    for i, column in enumerate(numeric_columns):
-        # Histogram
-        sns.histplot(df[column], kde=False, ax=axes[i, 0], color='skyblue')
-        axes[i, 0].set_title(f'Histogram of {column}')
-        
-        # KDE plot
-        sns.kdeplot(df[column], ax=axes[i, 1], color='green')
-        axes[i, 1].set_title(f'KDE of {column}')
-        
-        # Boxplot
-        sns.boxplot(x=df[column], ax=axes[i, 2], color='orange')
-        axes[i, 2].set_title(f'Boxplot of {column}')
-    
-    plt.tight_layout()
-    plt.show()
-    print("✅ Visualized data distributions using histograms, KDE, and boxplots.")
+    report = {
+        "rows": df.shape[0],
+        "columns": df.shape[1],
+        "nan_check": check_final_nans(df),
+        "type_check": check_invalid_types(df),
+        "outlier_check": recheck_outliers(df)
+    }
 
-# Example usage
-# Assume you have a DataFrame `df`
+    report["is_valid"] = (
+        not report["nan_check"]["has_nans"]
+        and report["type_check"]["count"] == 0
+        and len(report["outlier_check"]["outlier_columns"]) == 0
+    )
 
-# Check for missing values (NaNs)
-check_final_nans(df)
-
-# Check for invalid data types
-check_invalid_types(df)
-
-# Recheck for outliers using Z-scores
-recheck_outliers(df, method="zscore", threshold=3)
-
-# Visualize the data distribution
-visualize_data_distribution(df)
+    return report

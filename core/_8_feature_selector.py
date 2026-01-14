@@ -1,125 +1,109 @@
-# >--feature_selector.py--<
+# core/_8_feature_selector.py
 
+from typing import List, Tuple, Dict
+
+import pandas as pd
 from sklearn.feature_selection import RFE, SelectKBest, f_classif
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 
-def fit_feature_selector(X, y, method="rfe", estimator=None, k="all"):
+
+# ----------------------------
+# Feature selection
+# ----------------------------
+def fit_feature_selector(
+    X: pd.DataFrame,
+    y: pd.Series,
+    method: str = "rfe",
+    estimator=None,
+    k: int | str = "all"
+) -> Tuple[List[str], Dict]:
     """
-    Fit feature selector based on the method.
-    
-    - RFE (Recursive Feature Elimination)
-    - SelectKBest with ANOVA F-test
-    
-    Args:
-    - X (DataFrame): Feature matrix
-    - y (Series): Target variable
-    - method (str): Feature selection method, either 'rfe' or 'selectkbest'
-    - estimator (model object): Estimator to use for RFE (default LogisticRegression)
-    - k (int or "all"): Number of features to select (default 'all')
-    
+    Select important features based on a supervised method.
+
     Returns:
-    - selected_features (list): List of selected feature names
+        selected_features
+        metadata
     """
     if estimator is None:
-        estimator = LogisticRegression()  # Default estimator if none is provided
-    
+        estimator = LogisticRegression(max_iter=500)
+
+    metadata: Dict = {
+        "method": method,
+        "k": k,
+        "estimator": estimator.__class__.__name__
+    }
+
     if method == "rfe":
         selector = RFE(estimator, n_features_to_select=k)
-        selector = selector.fit(X, y)
+        selector.fit(X, y)
+        mask = selector.support_
+
     elif method == "selectkbest":
         selector = SelectKBest(score_func=f_classif, k=k)
-        selector = selector.fit(X, y)
+        selector.fit(X, y)
+        mask = selector.get_support()
+
     else:
-        raise ValueError(f"Unknown method: {method}")
+        raise ValueError("method must be 'rfe' or 'selectkbest'")
 
-    selected_features = X.columns[selector.support_].tolist()
-    print(f"✅ Selected Features: {selected_features}")
-    return selected_features
+    selected_features = X.columns[mask].tolist()
+    metadata["selected_features"] = selected_features
 
-def drop_selected_features(X, selected_features):
+    return selected_features, metadata
+
+
+# ----------------------------
+# Drop features
+# ----------------------------
+def drop_selected_features(
+    X: pd.DataFrame,
+    selected_features: List[str]
+) -> pd.DataFrame:
     """
-    Drop the selected features from the dataframe.
-    
-    Args:
-    - X (DataFrame): Feature matrix
-    - selected_features (list): List of features to drop
-    
+    Drops selected features from feature matrix.
+    """
+    return X.drop(columns=selected_features, errors="ignore")
+
+
+# ----------------------------
+# Feature importance ranking
+# ----------------------------
+def auto_feature_importance(
+    X: pd.DataFrame,
+    y: pd.Series,
+    model_type: str = "random_forest",
+    top_n: int = 10
+) -> Tuple[pd.DataFrame, Dict]:
+    """
+    Rank features by importance using tree-based models.
+
     Returns:
-    - X_dropped (DataFrame): DataFrame with the selected features dropped
-    """
-    X_dropped = X.drop(columns=selected_features)
-    print(f"✅ Dropped Features: {selected_features}")
-    return X_dropped
-
-from sklearn.ensemble import RandomForestClassifier
-import xgboost as xgb
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def auto_feature_importance(X, y, model_type="random_forest", top_n=10):
-    """
-    Automatically rank and plot feature importances using models like RandomForest or XGBoost.
-    
-    Args:
-    - X (DataFrame): Feature matrix
-    - y (Series): Target variable
-    - model_type (str): Model to use for ranking features, either 'random_forest' or 'xgboost'
-    - top_n (int): Number of top features to return
-    
-    Returns:
-    - feature_importance_df (DataFrame): Features ranked by importance
+        feature_importance_df
+        metadata
     """
     if model_type == "random_forest":
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
-    elif model_type == "xgboost":
-        model = xgb.XGBClassifier(n_estimators=100, random_state=42)
+        model = RandomForestClassifier(
+            n_estimators=200,
+            random_state=42,
+            n_jobs=-1
+        )
     else:
-        raise ValueError(f"Unsupported model type: {model_type}")
-    
+        raise ValueError("Currently supported model_type: 'random_forest'")
+
     model.fit(X, y)
-    
-    # Get feature importances
-    feature_importances = model.feature_importances_
+
+    importances = model.feature_importances_
+
     feature_importance_df = pd.DataFrame({
-        'feature': X.columns,
-        'importance': feature_importances
-    })
-    
-    # Sort by importance
-    feature_importance_df = feature_importance_df.sort_values(by='importance', ascending=False)
-    
-    # Plot top N features
-    plt.figure(figsize=(10, 6))
-    plt.barh(feature_importance_df.head(top_n)['feature'], feature_importance_df.head(top_n)['importance'])
-    plt.xlabel('Feature Importance')
-    plt.title(f'Top {top_n} Feature Importances')
-    plt.gca().invert_yaxis()
-    plt.show()
+        "feature": X.columns,
+        "importance": importances
+    }).sort_values(by="importance", ascending=False)
 
-    return feature_importance_df
+    metadata = {
+        "model_type": model_type,
+        "top_n": top_n,
+        "top_features": feature_importance_df.head(top_n)["feature"].tolist()
+    }
 
-# Example usage
-X = df.drop('target', axis=1)
-y = df['target']
-
-# Fit Feature Selector
-selected_features = fit_feature_selector(X, y, method="rfe", k=5)
-
-# Drop the selected features
-X_dropped = drop_selected_features(X, selected_features)
-
-# Auto-Feature Importance using RandomForest
-feature_importance_df = auto_feature_importance(X, y, model_type="random_forest", top_n=10)
-
-print("Feature Importance Rankings:")
-print(feature_importance_df.head(10))
-
-# Extra Tips:
-# Use RandomForest or XGBoost when dealing with large 
-# datasets to automatically detect important features.
-# Recursive Feature Elimination (RFE) is useful when 
-# you need a more controlled selection based on model performance.
-# SelectKBest is a simpler method based on univariate 
-# feature selection that can work well with small datasets.
-
---------------------------------------------------------
+    return feature_importance_df.head(top_n), metadata

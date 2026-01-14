@@ -1,90 +1,158 @@
+# start.py
+
 import os
 import sys
 import time
 import threading
 import subprocess
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog
 
-# Global variable for the loading animation
-stop_loading = False
+# ------------------------------
+# Loading animation controller
+# ------------------------------
+_stop_loading = threading.Event()
+
 
 def loading_animation(message: str):
     """Displays a loading spinner animation."""
     spinner = ['◜', '◝', '◞', '◟']
     i = 0
-    while not stop_loading:
+    while not _stop_loading.is_set():
         sys.stdout.write(f"\r{message} {spinner[i % len(spinner)]}")
         sys.stdout.flush()
         i += 1
         time.sleep(0.1)
 
-def pick_folder():
+
+# ------------------------------
+# Folder picker
+# ------------------------------
+def pick_folder() -> str:
     """Prompts the user to select a folder via GUI or terminal input."""
     try:
         root = tk.Tk()
         root.withdraw()
         folder = filedialog.askdirectory(title="Select Folder to Create VENV")
-        if not folder:
-            messagebox.showinfo("Cancelled", "Setup cancelled by the user.")
-            print("\n>--Setup cancelled--<")
-            sys.exit(0)
-        return folder
-    except Exception:
-        print("⚠ GUI selection failed. Falling back to terminal input.")
-        folder = input("Enter the full path for venv manually: ").strip()
-        if not folder:
-            print("\n>--No path provided. Exiting.--<")
-            sys.exit(1)
-        return folder
+        root.destroy()
 
-def create_virtual_environment(venv_dir):
+        if not folder:
+            print(">--Setup cancelled by user--<")
+            sys.exit(0)
+
+        return os.path.abspath(folder)
+
+    except Exception:
+        print("⚠ GUI failed. Falling back to terminal input.")
+        folder = input("Enter full path for venv manually: ").strip()
+        if not folder:
+            print(">--No path provided. Exiting.--<")
+            sys.exit(1)
+        return os.path.abspath(folder)
+
+
+# ------------------------------
+# Virtual environment creation
+# ------------------------------
+def create_virtual_environment(venv_dir: str) -> None:
     """Creates a virtual environment at the specified directory."""
     if os.path.exists(venv_dir):
-        print(f"\n>--Virtual environment 'ADCP' already exists at: {venv_dir}--<")
-        print(">--Skipping venv creation--<\n")
+        print(f">--Virtual environment already exists at: {venv_dir}--<")
         return
 
-    print(f"\nCreating virtual environment at: {venv_dir} ...")
-    global stop_loading
-    stop_loading = False
-    thread = threading.Thread(target=loading_animation, args=("Creating virtual environment",))
-    thread.start()
+    print(f">--Creating virtual environment at: {venv_dir}--<")
+
+    _stop_loading.clear()
+    spinner_thread = threading.Thread(
+        target=loading_animation,
+        args=("Creating virtual environment",),
+        daemon=True
+    )
+    spinner_thread.start()
 
     try:
         subprocess.check_call([sys.executable, "-m", "venv", venv_dir])
     except subprocess.CalledProcessError as e:
-        print(f"⚠ Failed to create virtual environment: {e}")
+        print(f"\n❌ Failed to create virtual environment: {e}")
         sys.exit(1)
     finally:
-        stop_loading = True
-        thread.join()
-        print("\r>--Virtual environment created successfully--<\n")
+        _stop_loading.set()
+        spinner_thread.join()
+        print("\r>--Virtual environment created successfully--<")
 
-def install_requirements(venv_dir):
-    """Installs required packages using the install_req.py script."""
-    print("\n>--Calling package injector--<")
-    this_dir = os.path.dirname(os.path.abspath(__file__))
-    step_1_script = os.path.join(this_dir, "utils", "install_req.py")
-    try:
-        subprocess.check_call([sys.executable, step_1_script, venv_dir])
-    except subprocess.CalledProcessError as e:
-        print(f"⚠ Failed to install requirements: {e}")
+
+# ------------------------------
+# Install requirements
+# ------------------------------
+def install_requirements(venv_dir: str) -> None:
+    print(">--Installing required packages--<")
+
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    installer_script = os.path.join(project_root, "utils", "install_req.py")
+
+    if not os.path.exists(installer_script):
+        print("❌ install_req.py not found.")
         sys.exit(1)
 
-def main():
-    """Main function to orchestrate the setup process."""
-    print("\n>--Welcome to the ADCP Setup--<")
+    # Resolve venv python explicitly
+    if os.name == "nt":
+        venv_python = os.path.join(venv_dir, "Scripts", "python.exe")
+    else:
+        venv_python = os.path.join(venv_dir, "bin", "python")
 
-    # Step 1: Pick folder for virtual environment
-    venv_path = pick_folder()
-    venv_dir = os.path.join(venv_path, "ADCP")
+    if not os.path.exists(venv_python):
+        print("❌ Venv python not found.")
+        sys.exit(1)
 
-    # Step 2: Create virtual environment
+    try:
+        subprocess.check_call([
+            venv_python,
+            installer_script,
+            venv_dir
+        ])
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Package installation failed: {e}")
+        sys.exit(1)
+
+
+# ------------------------------
+# Post-setup instructions
+# ------------------------------
+def print_next_steps(venv_dir: str) -> None:
+    print("\n>-- NEXT STEPS --<\n")
+
+    if os.name == "nt":
+        activate_cmd = os.path.join(venv_dir, "Scripts", "activate")
+        python_cmd = os.path.join(venv_dir, "Scripts", "python.exe")
+    else:
+        activate_cmd = f"source {os.path.join(venv_dir, 'bin', 'activate')}"
+        python_cmd = os.path.join(venv_dir, "bin", "python")
+
+    print("1) Activate the virtual environment:")
+    print(f"   {activate_cmd}\n")
+
+    print("2) Run the Streamlit UI:")
+    print("   streamlit run ui/streamlit_app.py\n")
+
+    print("OR (without activation):")
+    print(f"   {python_cmd} -m streamlit run ui/streamlit_app.py\n")
+
+
+# ------------------------------
+# Entry point
+# ------------------------------
+def main() -> None:
+    print("\n>-- ADCP Setup Initializing --<\n")
+
+    venv_base_path = pick_folder()
+    venv_dir = os.path.join(venv_base_path, "ADCP")
+
     create_virtual_environment(venv_dir)
-
-    # Step 3: Install requirements
     install_requirements(venv_dir)
+
+    print("\n>-- Setup completed successfully --<")
+    print_next_steps(venv_dir)
+
 
 if __name__ == "__main__":
     main()

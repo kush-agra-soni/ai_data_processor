@@ -1,74 +1,122 @@
-import pandas as pd                      
+import pandas as pd
+from typing import List
 
-class cleaning:
-    def standardize_empty_cells(self, dataframe: pd.DataFrame):
-        """Standardize all variations of empty cells to pd.NA for consistency."""
-        dataframe = dataframe.applymap(lambda x: pd.NA if pd.isna(x) else x)
-        print("standardize_empty_cells")
-        return dataframe
 
-    def remove_special_characters(self, dataframe: pd.DataFrame):
-        """Remove special characters from column names only."""
-        dataframe.columns = dataframe.columns.str.replace(r'[^a-zA-Z0-9_]', ' ',  regex=True)
-        print("remove_special_characters_from_columns")
-        return dataframe
+class Cleaner:
+    """
+    Deterministic structural and column-level cleaning.
+    No logging, no prints, no side effects.
+    """
 
-    def convert_to_lowercase(self, dataframe: pd.DataFrame):
-        """Convert column names to lowercase only."""
-        dataframe.columns = dataframe.columns.str.lower()
-        print("convert_column_names_to_lowercase")
-        return dataframe
+    # ----------------------------
+    # Cell-level normalization
+    # ----------------------------
+    def standardize_empty_cells(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Normalize all missing-like values to pandas NA.
+        """
+        df = df.copy()
+        return df.applymap(lambda x: pd.NA if pd.isna(x) else x)
 
-    def remove_whitespace(self, dataframe: pd.DataFrame):
-        """Remove leading/trailing whitespace from column names only."""
-        dataframe.columns = dataframe.columns.str.strip()
-        print("remove_whitespace_from_column_names")
-        return dataframe
+    # ----------------------------
+    # Column name cleaning
+    # ----------------------------
+    def remove_special_characters(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        df.columns = df.columns.str.replace(r"[^a-zA-Z0-9_]", " ", regex=True)
+        return df
 
-    def replace_space_with_underscore(self, dataframe: pd.DataFrame):
-        """Replace spaces with underscores in column names only."""
-        dataframe.columns = dataframe.columns.str.replace(' ', '_', regex=False)
-        print("replace_space_with_underscore_in_columns")
-        return dataframe
+    def convert_to_lowercase(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        df.columns = df.columns.str.lower()
+        return df
 
-    def remove_empty_columns(self, dataframe: pd.DataFrame):
-        dataframe = dataframe.dropna(axis=1, how='all')
-        print("remove_empty_columns")
-        return dataframe
+    def remove_whitespace(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        df.columns = df.columns.str.strip()
+        return df
 
-    def remove_empty_rows(self, dataframe: pd.DataFrame):
-        """Remove rows where all values are missing, considering all representations of missing values."""
-        dataframe = dataframe.loc[~dataframe.isnull().all(axis=1)]
-        print("remove_empty_rows")
-        return dataframe
+    def replace_space_with_underscore(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        df.columns = df.columns.str.replace(" ", "_", regex=False)
+        return df
 
-    def identifier_column_remover(self, dataframe: pd.DataFrame):
-        columns_to_drop = []
+    # ----------------------------
+    # Structural cleanup
+    # ----------------------------
+    def remove_empty_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        return df.dropna(axis=1, how="all")
 
-        # Logic to identify integer columns with unique, increasing values
-        for column in dataframe.columns:
-            if dataframe[column].dtype == 'int' and dataframe[column].is_unique and dataframe[column].is_monotonic_increasing:
-                columns_to_drop.append(column)
+    def remove_empty_rows(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        return df.loc[~df.isna().all(axis=1)]
 
-        dataframe = dataframe.drop(columns=columns_to_drop)
-        print("identifier_column_remover")
-        return dataframe
+    def remove_duplicates(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        return df.drop_duplicates().reset_index(drop=True)
 
-    def remove_duplicates(self, dataframe: pd.DataFrame):
-        dataframe = dataframe.drop_duplicates().reset_index(drop=True)
-        print("remove_duplicates")
-        return dataframe
+    # ----------------------------
+    # Identifier detection
+    # ----------------------------
+    def identifier_column_remover(
+        self,
+        df: pd.DataFrame,
+        max_unique_ratio: float = 0.98,
+        monotonic_only: bool = True
+    ) -> pd.DataFrame:
+        """
+        Remove likely identifier columns (IDs, surrogate keys).
 
-    def run_cleaning(self, dataframe: pd.DataFrame):
-        """Apply all cleaning methods in sequence to the DataFrame."""
-        dataframe = self.standardize_empty_cells(dataframe)
-        dataframe = self.remove_special_characters(dataframe)
-        dataframe = self.convert_to_lowercase(dataframe)
-        dataframe = self.remove_whitespace(dataframe)
-        dataframe = self.replace_space_with_underscore(dataframe)
-        dataframe = self.identifier_column_remover(dataframe)
-        dataframe = self.remove_empty_columns(dataframe)
-        dataframe = self.remove_empty_rows(dataframe)
-        dataframe = self.remove_duplicates(dataframe)
-        print("All cleaning methods applied successfully.")
-        return dataframe
+        Rules:
+        - Numeric
+        - High uniqueness
+        - Monotonic increasing (optional)
+        """
+        df = df.copy()
+        cols_to_drop: List[str] = []
+
+        row_count = len(df)
+
+        for col in df.columns:
+            series = df[col]
+
+            if not pd.api.types.is_integer_dtype(series):
+                continue
+
+            if series.isna().any():
+                continue
+
+            unique_ratio = series.nunique() / max(row_count, 1)
+
+            if unique_ratio >= max_unique_ratio:
+                if monotonic_only and not series.is_monotonic_increasing:
+                    continue
+                cols_to_drop.append(col)
+
+        if cols_to_drop:
+            df = df.drop(columns=cols_to_drop)
+
+        return df
+
+    # ----------------------------
+    # Canonical execution entry
+    # ----------------------------
+    def run(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Canonical cleaner entry point.
+        Execution order is fixed and deterministic.
+        """
+        df = self.standardize_empty_cells(df)
+
+        df = self.remove_special_characters(df)
+        df = self.convert_to_lowercase(df)
+        df = self.remove_whitespace(df)
+        df = self.replace_space_with_underscore(df)
+
+        df = self.identifier_column_remover(df)
+        df = self.remove_empty_columns(df)
+        df = self.remove_empty_rows(df)
+        df = self.remove_duplicates(df)
+
+        return df

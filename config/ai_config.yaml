@@ -1,0 +1,146 @@
+# ============================================================
+# AI GLOBAL SETTINGS
+# ============================================================
+
+ai:
+  enabled: true
+  mode: autonomous            # autonomous | advisory
+  strict_mode: true           # stop on any execution error
+  confidence_threshold: 0.60  # minimum confidence required from LLM plan
+
+# ============================================================
+# LLM SETTINGS (Gemini)
+# ============================================================
+
+llm:
+  provider: gemini
+  model: gemini-1.5-flash
+  temperature: 0.2
+  max_retries: 3
+  timeout_seconds: 30
+  cache_decisions: true       # reuse plan for same dataset fingerprint
+
+# ============================================================
+# PROFILER LIMITS (token + privacy safety)
+# ============================================================
+
+profiler:
+  sample_rows: 10
+  top_k_values: 5
+  mask_string_length: 32
+  detect_pii: true
+  block_pii_columns: true     # AI must not transform PII columns
+
+# ============================================================
+# PIPELINE EXECUTION POLICY
+# ============================================================
+
+pipeline:
+  allow_steps:
+    - detect
+    - clean
+    - standardize
+    - handle_outliers
+    - impute
+    - extract_dates
+    - enforce_types
+    - auto_convert_types
+    - encode
+    - select_features
+    - feature_importance
+    - scale
+    - resample
+    - validate
+
+  force_final_validation: true
+  stop_on_validation_failure: false
+
+# ============================================================
+# OUTLIER HANDLING CONSTRAINTS
+# ============================================================
+
+outliers:
+  default_method: iqr
+  default_strategy: auto      # auto | cap | remove
+  max_rows_removed_ratio: 0.15
+  allow_remove: true
+
+# ============================================================
+# IMPUTATION POLICY
+# ============================================================
+
+imputation:
+  default_strategy: auto
+  max_missing_ratio: 0.40     # beyond this → warn user
+  allow_regression: true
+  allow_knn: true
+
+# ============================================================
+# ENCODING POLICY
+# ============================================================
+
+encoding:
+  default_strategy: onehot    # label | onehot | frequency
+  max_onehot_columns: 200
+  allow_high_cardinality: false
+  high_cardinality_threshold: 50
+
+# ============================================================
+# FEATURE SELECTION POLICY
+# ============================================================
+
+feature_selection:
+  enabled: true
+  max_features: 50
+  default_method: rfe
+  allow_model_based_importance: true
+
+# ============================================================
+# SCALING POLICY
+# ============================================================
+
+scaling:
+  enabled: true
+  default_scaler: standard    # standard | minmax | robust
+  skip_if_binary_only: true
+
+# ============================================================
+# RESAMPLING / IMBALANCE POLICY
+# ============================================================
+
+resampling:
+  enabled: true
+  default_strategy: smote     # smote | random_over | random_under
+  max_size_multiplier: 3.0
+  min_class_ratio: 0.10       # below this → resampling allowed
+  block_for_regression: true
+
+# ============================================================
+# RISK GOVERNANCE
+# ============================================================
+
+risk:
+  block_high_risk_steps: false
+  require_user_confirmation_for:
+    - resample
+    - remove_outliers
+    - select_features
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+logging:
+  level: INFO                 # INFO | DEBUG
+  show_step_reason: true
+  show_risk_level: true
+  persist_logs: false
+  log_dir: logs/
+
+# ============================================================
+# FAILSAFE
+# ============================================================
+
+failsafe:
+  max_execution_time_seconds: 600
+  rollback_on_failure: false
